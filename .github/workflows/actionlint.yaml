@@ -7,7 +7,7 @@ on:
 jobs:
   acitonlint:
     name: Lint GitHub Workflows
-    runs-on: ubuntu-latest # Runs on standard runner, docker pulls with --platform
+    runs-on: self-hosted
     steps:
       - name: Checkout code
         uses: actions/checkout@v6

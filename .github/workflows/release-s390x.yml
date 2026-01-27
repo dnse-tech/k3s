@@ -29,7 +29,7 @@ jobs:
 
   build-airgap-s390x:
     name: Export Airgap Images (s390x)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -64,7 +64,7 @@ jobs:
 
   push-s390x-image:
     name: Build and Push s390x Image
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [build-s390x]
     outputs:
       tag: ${{ steps.get-tag.outputs.tag }}
@@ -127,7 +127,7 @@ jobs:
   create-manifest:
     name: Create Multi-Arch Manifest
     needs: [push-s390x-image]
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -165,7 +165,7 @@ jobs:
 
   upload-release-assets:
     name: Upload Release Assets
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [build-s390x, build-airgap-s390x]
     steps:
       - name: Checkout code
