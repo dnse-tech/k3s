@@ -17,8 +17,23 @@ PKG_KUBE_ROUTER="github.com/cloudnativelabs/kube-router/v2"
 PKG_CRI_DOCKERD="github.com/Mirantis/cri-dockerd"
 PKG_ETCD="go.etcd.io/etcd"
 PKG_HELM_CONTROLLER="github.com/k3s-io/helm-controller"
+PKG_CLOUDPROVIDER="github.com/k3s-io/k3s/pkg/cloudprovider"
 
 buildDate=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+# Set klipper images based on architecture
+# s390x uses GHCR images from dnse-tech (upstream rancher doesn't support s390x)
+VERSION_KLIPPER_LB="v0.4.13"
+case ${ARCH} in
+  s390x)
+    KLIPPER_HELM_IMAGE="ghcr.io/dnse-tech/klipper-helm:${VERSION_HELM_JOB}"
+    KLIPPER_LB_IMAGE="ghcr.io/dnse-tech/klipper-lb:${VERSION_KLIPPER_LB}"
+    ;;
+  *)
+    KLIPPER_HELM_IMAGE="rancher/klipper-helm:${VERSION_HELM_JOB}"
+    KLIPPER_LB_IMAGE="rancher/klipper-lb:${VERSION_KLIPPER_LB}"
+    ;;
+esac
 
 VERSIONFLAGS="
     -X ${PKG}/pkg/version.Version=${VERSION}
@@ -54,8 +69,9 @@ VERSIONFLAGS="
     -X ${PKG_CRI_DOCKERD}/cmd/version.BuildTime=${buildDate}
 
     -X ${PKG_ETCD}/api/v3/version.GitSHA=HEAD
-    
-    -X ${PKG_HELM_CONTROLLER}/pkg/controllers/chart.DefaultJobImage=rancher/klipper-helm:${VERSION_HELM_JOB}
+
+    -X ${PKG_HELM_CONTROLLER}/pkg/controllers/chart.DefaultJobImage=${KLIPPER_HELM_IMAGE}
+    -X ${PKG_CLOUDPROVIDER}.DefaultLBImage=${KLIPPER_LB_IMAGE}
 "
 if [ -n "${DEBUG}" ]; then
   GCFLAGS="-N -l"
@@ -107,14 +123,15 @@ fi
 
 mkdir -p bin
 
-if [ ${ARCH} = armv7l ] || [ ${ARCH} = arm ]; then
+case ${ARCH} in
+  armv7l|arm)
     export GOARCH="arm"
     export GOARM="7"
-fi
-
-if [ ${ARCH} = s390x ]; then
+    ;;
+  s390x)
     export GOARCH="s390x"
-fi
+    ;;
+esac
 
 k3s_binaries=(
     "bin/k3s-agent"

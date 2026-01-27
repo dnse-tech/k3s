@@ -1,0 +1,52 @@
+name: Sync Rancher Upstream
+
+on:
+  schedule:
+    - cron: "0 17 * * *"  # Daily at 17:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM_REPO: k3s-io/k3s
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Check for new upstream releases
+        id: check
+        run: |
+          # Get latest release from k3s-io/k3s upstream
+          LATEST=$(gh release view -R ${{ env.UPSTREAM_REPO }} --json tagName -q .tagName)
+          echo "upstream_tag=$LATEST" >> $GITHUB_OUTPUT
+          echo "Latest upstream tag: $LATEST"
+
+          # Check if we already have this release
+          if gh release view "$LATEST" &>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Release $LATEST already exists locally"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Release $LATEST not found locally, will create"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create matching release
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          TAG="${{ steps.check.outputs.upstream_tag }}"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes "Synced from ${{ env.UPSTREAM_REPO }} $TAG
+
+          This release adds s390x architecture support.
+
+          Upstream: https://github.com/${{ env.UPSTREAM_REPO }}/releases/tag/$TAG"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

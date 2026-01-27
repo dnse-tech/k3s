@@ -1,0 +1,198 @@
+name: Release s390x
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g., v1.32.4+k3s1)"
+        required: true
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/k3s
+  UPSTREAM_IMAGE: rancher/k3s
+
+jobs:
+  build-s390x:
+    name: Build Binary (s390x)
+    uses: ./.github/workflows/build-k3s.yaml
+    with:
+      arch: s390x
+      upload-build: true
+
+  build-airgap-s390x:
+    name: Export Airgap Images (s390x)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Docker
+        uses: docker/setup-docker-action@v4
+        with:
+          version: type=image,tag=28
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+          set-host: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install Dependencies
+        run: sudo apt-get update -y && sudo apt-get install -y zstd pigz
+
+      - name: Create Airgap Package
+        run: |
+          mkdir -p ./dist/artifacts
+          export CONTAINERD_ADDRESS=$(docker info --format '{{.Containerd.Address}}')
+          sudo chgrp $(id -g) $CONTAINERD_ADDRESS $(dirname $CONTAINERD_ADDRESS)
+          ./scripts/package-airgap s390x
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: images-s390x
+          path: dist/artifacts/k3s-airgap-images-s390x.*
+          if-no-files-found: error
+          retention-days: 7
+
+  push-s390x-image:
+    name: Build and Push s390x Image
+    runs-on: ubuntu-latest
+    needs: [build-s390x]
+    outputs:
+      tag: ${{ steps.get-tag.outputs.tag }}
+      image_tag: ${{ steps.get-tag.outputs.image_tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Get tag
+        id: get-tag
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          # Transform v1.32.4+k3s1 → v1.32.4-k3s1 for Docker tag
+          IMAGE_TAG="${TAG//+/-}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker
+        uses: docker/setup-docker-action@v4
+        with:
+          version: type=image,tag=28
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+          set-host: true
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download K3s build
+        uses: actions/download-artifact@v7
+        with:
+          name: k3s-s390x
+          path: ./dist/artifacts
+
+      - name: Prepare build folder
+        run: |
+          mkdir -p ./build/out
+          cp ./dist/artifacts/data-* ./build/out
+
+      - name: Build and push s390x image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./package/Dockerfile
+          platforms: linux/s390x
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.get-tag.outputs.image_tag }}-s390x
+          build-args: |
+            TAG=${{ steps.get-tag.outputs.tag }}
+
+  create-manifest:
+    name: Create Multi-Arch Manifest
+    needs: [push-s390x-image]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull and retag upstream images
+        run: |
+          TAG="${{ needs.push-s390x-image.outputs.tag }}"
+          IMAGE_TAG="${{ needs.push-s390x-image.outputs.image_tag }}"
+
+          echo "Pulling upstream images for tag: $IMAGE_TAG"
+          for ARCH in amd64 arm64; do
+            echo "Pulling ${{ env.UPSTREAM_IMAGE }}:$IMAGE_TAG for $ARCH..."
+            docker pull --platform linux/$ARCH ${{ env.UPSTREAM_IMAGE }}:$IMAGE_TAG
+            docker tag ${{ env.UPSTREAM_IMAGE }}:$IMAGE_TAG ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$IMAGE_TAG-$ARCH
+            docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$IMAGE_TAG-$ARCH
+          done
+
+      - name: Create multi-arch manifest
+        run: |
+          IMAGE_TAG="${{ needs.push-s390x-image.outputs.image_tag }}"
+
+          echo "Creating multi-arch manifest for: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$IMAGE_TAG"
+          docker buildx imagetools create \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$IMAGE_TAG \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$IMAGE_TAG-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$IMAGE_TAG-arm64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$IMAGE_TAG-s390x
+
+  upload-release-assets:
+    name: Upload Release Assets
+    runs-on: ubuntu-latest
+    needs: [build-s390x, build-airgap-s390x]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: "*"
+          path: ./dist/artifacts
+          merge-multiple: true
+
+      - name: Prepare s390x checksums
+        run: |
+          OUTPUT_FILE="./dist/artifacts/sha256sum-s390x.txt"
+          cat ./dist/artifacts/k3s-airgap-images-s390x*.sha256sum >> "${OUTPUT_FILE}" || true
+          rm -f ./dist/artifacts/k3s-airgap-images-s390x*.sha256sum
+          cat ./dist/artifacts/k3s-s390x.sha256sum >> "${OUTPUT_FILE}" || true
+          rm -f ./dist/artifacts/k3s-s390x.sha256sum
+
+      - name: Upload Assets to Release
+        uses: softprops/action-gh-release@v2.2.1
+        with:
+          files: |
+            dist/artifacts/k3s-s390x
+            dist/artifacts/k3s-airgap-images-s390x.*
+            dist/artifacts/sha256sum-s390x.txt
+            dist/artifacts/data-linux-s390x.tar.zst
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

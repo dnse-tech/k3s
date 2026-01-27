@@ -30,13 +30,20 @@ jobs:
       arch: arm
       upload-build: true
 
+  build-s390x:
+    name: Build Binary (s390x)
+    uses: ./.github/workflows/build-k3s.yaml
+    with:
+      arch: s390x
+      upload-build: true
+
   push-release-image:
     name: Build and Push Multi-Arch Image
     runs-on: ubuntu-latest
     permissions: 
       packages: write # Needed to push images to GHCR
       id-token: write
-    needs: [build-amd64, build-arm64, build-arm]
+    needs: [build-amd64, build-arm64, build-arm, build-s390x]
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -170,7 +177,7 @@ jobs:
         with:
           context: .
           file: ./package/Dockerfile
-          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/s390x
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -187,7 +194,7 @@ jobs:
       contents: write # Needed to update release with assets
       id-token: write
     runs-on: ubuntu-latest
-    needs: [build-amd64, build-arm64, build-arm, build-airgap]
+    needs: [build-amd64, build-arm64, build-arm, build-s390x, build-airgap]
     steps:
     - name: Checkout code
       uses: actions/checkout@v6
@@ -217,7 +224,7 @@ jobs:
     - name: "Combine and format sha256sum files"
       run: |
         cp scripts/airgap/image-list.txt dist/artifacts/k3s-images.txt
-        for ARCH in amd64 arm64 arm; do
+        for ARCH in amd64 arm64 arm s390x; do
           OUTPUT_FILE="./dist/artifacts/sha256sum-${ARCH}.txt"
           cat ./dist/artifacts/k3s-airgap-images-${ARCH}*.sha256sum >> "${OUTPUT_FILE}"
           rm ./dist/artifacts/k3s-airgap-images-${ARCH}*.sha256sum # Remove the original file to avoid uploading it
