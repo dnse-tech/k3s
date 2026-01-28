@@ -56,7 +56,7 @@ jobs:
   build:
     name: Build # DO NOT CHANGE THIS NAME, we rely on it for INSTALL_K3S_PR functionality
     runs-on: self-hosted
-    timeout-minutes: ${{ inputs.arch == 's390x' && 60 || 20 }}
+    timeout-minutes: ${{ inputs.arch == 's390x' && 360 || 20 }}
     env:
       BIN_EXT: ${{ inputs.os == 'windows' && '.exe' || '' }}
       ARCH_EXT: ${{ inputs.os == 'windows' && '-windows' || format('-{0}', inputs.arch) }}
